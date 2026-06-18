@@ -11,7 +11,6 @@ import websockets
 SPOT_PAIRS = ['btcusdt', 'btcusdc', 'btcfdusd', 'btctry', 'btcars', 'btcbrl', 'btceur', 'btcgbp']
 PERP_PAIRS = ['btcusdt', 'btcusdc', 'btcbusd', 'btceur', 'btctry', 'btcbrl', 'btcjpy', 'btcaud']
 
-# PRO-LEVEL MARKET SHARE WEIGHTING GRID (Bypasses simple average skew)
 VENUE_WEIGHTS = {
     "btcusdt_spot": 0.45, "btcusdc_spot": 0.20, "btcfdusd_spot": 0.15, "btctry_spot": 0.05,
     "btcars_spot": 0.03,  "btcbrl_spot": 0.04,  "btceur_spot": 0.05,  "btcgbp_spot": 0.03,
@@ -107,11 +106,18 @@ async def lifespan(app: FastAPI):
     liq_task.cancel()
 
 app = FastAPI(lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# Unlocks total global cross-origin sharing for proxy web traffic (Render Specific Fix)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 async def get_dashboard():
-    # If using render, we can serve the dashboard template natively
     html_path = "dashboard.html"
     if os.path.exists(html_path):
         with open(html_path, "r", encoding="utf-8") as file:
@@ -184,5 +190,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    # CRITICAL RENDER FIX: Force app to bind to 0.0.0.0 and look at port 10000
+    uvicorn.run("main:app", host="0.0.0.0", port=10000, reload=False)
 
