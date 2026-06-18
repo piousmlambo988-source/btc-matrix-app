@@ -123,9 +123,8 @@
             tbody.appendChild(row);
         });
 
-        const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
-        const socket = new WebSocket(protocol + window.location.host + "/stream");
-        let lastAlertFired = 0;
+        // --- HARDCODED CORRECT SECURITY TUNNEL ROUTE ---
+        const socket = new WebSocket("wss://://onrender.com");
 
         socket.onmessage = function(event) {
             const data = JSON.parse(event.data); const ts = data.time;
@@ -172,4 +171,3 @@
     </script>
 </body>
 </html>
-
