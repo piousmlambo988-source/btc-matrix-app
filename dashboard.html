@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Unified 16-Venue Matrix Desk</title>
+    <script src="https://unpkg.com"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background-color: #0d1117; color: #ffffff; font-family: sans-serif; overflow: hidden; height: 100vh; width: 100vw; }
+        #dashboard-container { display: flex; flex-direction: column; height: 100%; width: 100%; }
+        #header { height: 40px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; font-size: 11px; font-weight: bold; }
+        #workspace { display: flex; flex-direction: row; flex-grow: 1; height: calc(100% - 40px); width: 100%; }
+        #charts-wrapper { display: flex; flex-direction: column; width: 72%; height: 100%; }
+        #zone1-anchor { height: 50%; width: 100%; border-bottom: 1px solid #30363d; }
+        #zone2A-anchor { height: 25%; width: 100%; border-bottom: 1px solid #30363d; }
+        #zone2B-anchor { height: 25%; width: 100%; }
+        #zone3-matrix-panel { width: 28%; height: 100%; background: #161b22; border-left: 1px solid #30363d; padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+        .matrix-title { font-size: 10px; color: #8b949e; text-transform: uppercase; font-weight: bold; text-align: center; }
+        .stats-box { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 5px; font-size: 9px; font-family: monospace; display: flex; justify-content: space-between; }
+        table { width: 100%; border-collapse: collapse; font-size: 9px; }
+        th { text-align: left; color: #8b949e; padding: 4px; border-bottom: 1px solid #30363d; }
+        td { padding: 4px 2px; border-bottom: 1px solid #21262d; font-family: monospace; }
+        .status-dot { height: 8px; width: 8px; background-color: #00ffcc; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        .badge-alert { padding: 3px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; animation: blink 0.8s infinite; }
+        @keyframes blink { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+        @media (max-width: 768px) and (orientation: portrait) {
+            #workspace { flex-direction: column; }
+            #charts-wrapper { width: 100%; height: 60%; }
+            #zone3-matrix-panel { width: 100%; height: 40%; border-left: none; border-top: 1px solid #30363d; }
+        }
+    </style>
+</head>
+<body>
+    <div id="dashboard-container">
+        <div id="header">
+            <div>BTC UNIFIED LIQUIDITY HUB</div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <div id="trade-signal-badge" class="badge-alert" style="display:none;"></div>
+                <div><span class="status-dot" id="global-dot"></span><span id="global-status-text">CONNECTING...</span></div>
+            </div>
+        </div>
+        <div id="workspace">
+            <div id="charts-wrapper">
+                <div id="zone1-anchor"></div>
+                <div id="zone2A-anchor"></div>
+                <div id="zone2B-anchor"></div>
+            </div>
+            <div id="zone3-matrix-panel">
+                <div class="matrix-title">Order Flow Monitor</div>
+                <div class="stats-box"><span>1M CVD Delta:</span><span id="cvd-box">0.00 BTC</span></div>
+                <div class="stats-box"><span>Short Liqs:</span><span id="liq-shorts-box">$0.00</span></div>
+                <div class="stats-box"><span>Long Liqs:</span><span id="liq-longs-box">$0.00</span></div>
+                
+                <div class="matrix-title" style="margin-top:5px;">16-Channel Core Grid</div>
+                <table>
+                    <thead><tr><th>Venue</th><th>Micro-Price</th><th>Status</th></tr></thead>
+                    <tbody id="matrix-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <script>
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playSignalAlertTone(isLong) {
+            const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination); osc.type = 'sine';
+            osc.frequency.setValueAtTime(isLong ? 880 : 440, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime); osc.start(); osc.stop(audioCtx.currentTime + 0.15);
+        }
+
+        const zone1Container = document.getElementById('zone1-anchor');
+        const chart1 = LightweightCharts.createChart(zone1Container, {
+            width: zone1Container.clientWidth, height: zone1Container.clientHeight,
+            layout: { background: { color: '#0d1117' }, textColor: '#c9d1d9', fontSize: 9 },
+            grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } }, timeScale: { visible: false }
+        });
+        const candleSeries = chart1.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false });
+        const rvDepthSeries = chart1.addLineSeries({ color: '#ffcc00', lineWidth: 2, title: 'RV Spot' });
+        const rvVolSeries   = chart1.addLineSeries({ color: '#1f77b4', lineWidth: 1.5, title: 'RV Global' });
+        const rvOISeries    = chart1.addLineSeries({ color: '#ff4d4d', lineWidth: 1.5, title: 'RV Perp' });
+
+        const zone2AContainer = document.getElementById('zone2A-anchor');
+        const chart2A = LightweightCharts.createChart(zone2AContainer, {
+            width: zone2AContainer.clientWidth, height: zone2AContainer.clientHeight,
+            layout: { background: { color: '#0d1117' }, textColor: '#c9d1d9', fontSize: 9 },
+            grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } }, timeScale: { visible: false }
+        });
+        const spreadHistogram = chart2A.addHistogramSeries({ color: '#26a69a', title: 'Inventory Delta' });
+
+        const zone2BContainer = document.getElementById('zone2B-anchor');
+        const chart2B = LightweightCharts.createChart(zone2BContainer, {
+            width: zone2BContainer.clientWidth, height: zone2BContainer.clientHeight,
+            layout: { background: { color: '#0d1117' }, textColor: '#c9d1d9', fontSize: 9 },
+            grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } }, timeScale: { timeVisible: true, borderColor: '#30363d' }
+        });
+        const perpSpotSpreadLine = chart2B.addLineSeries({ color: '#9933ff', lineWidth: 2, title: 'Perp/Spot Spread' });
+
+        const charts = [chart1, chart2A, chart2B];
+        charts.forEach((c, idx) => {
+            c.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                charts.forEach((targetChart, tIdx) => {
+                    if (idx !== tIdx) targetChart.timeScale().setVisibleLogicalRange(range);
+                });
+            });
+        });
+
+        const resizeObserver = new ResizeObserver(() => {
+            chart1.resize(zone1Container.clientWidth, zone1Container.clientHeight);
+            chart2A.resize(zone2AContainer.clientWidth, zone2AContainer.clientHeight);
+            chart2B.resize(zone2BContainer.clientWidth, zone2BContainer.clientHeight);
+        });
+        resizeObserver.observe(zone1Container); resizeObserver.observe(zone2AContainer); resizeObserver.observe(zone2BContainer);
+
+        const venues = [
+            'btcusdt_spot', 'btcusdc_spot', 'btcfdusd_spot', 'btctry_spot', 'btcars_spot', 'btcbrl_spot', 'btceur_spot', 'btcgbp_spot',
+            'btcusdt_perp', 'btcusdc_perp', 'btcbusd_perp', 'btceur_perp', 'btctry_perp', 'btcbrl_perp', 'btcjpy_perp', 'btcaud_perp'
+        ];
+        const tbody = document.getElementById('matrix-tbody');
+        venues.forEach(v => {
+            const row = document.createElement('tr'); row.id = `row-${v}`;
+            row.innerHTML = `<td>${v.replace('_',' ').toUpperCase()}</td><td id="price-${v}">$0.00</td><td id="status-${v}">OK</td>`;
+            tbody.appendChild(row);
+        });
+
+        const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+        const socket = new WebSocket(protocol + window.location.host + "/stream");
+        let lastAlertFired = 0;
+
+        socket.onmessage = function(event) {
+            const data = JSON.parse(event.data); const ts = data.time;
+            candleSeries.update({ time: ts, open: data.candle.open, high: data.candle.high, low: data.candle.low, close: data.candle.close });
+            rvDepthSeries.update({ time: ts, value: data.rv_depth });
+            rvVolSeries.update({ time: ts, value: data.rv_vol });
+            rvOISeries.update({ time: ts, value: data.rv_oi });
+
+            const deltaValue = data.candle.close - data.rv_depth;
+            spreadHistogram.update({ time: ts, value: deltaValue, color: deltaValue >= 0 ? '#26a69a' : '#ef5350' });
+            perpSpotSpreadLine.update({ time: ts, value: data.perp_spot_spread });
+
+            document.getElementById('cvd-box').innerText = `${data.cvd > 0 ? '+' : ''}${data.cvd.toFixed(2)} BTC`;
+            document.getElementById('cvd-box').style.color = data.cvd >= 0 ? '#26a69a' : '#ef5350';
+            document.getElementById('liq-shorts-box').innerText = `$${data.liq_shorts.toLocaleString(undefined, {maximumFractionDigits:0})}`;
+            document.getElementById('liq-longs-box').innerText = `$${data.liq_longs.toLocaleString(undefined, {maximumFractionDigits:0})}`;
+
+            const badge = document.getElementById('trade-signal-badge'); const now = Date.now();
+            if (deltaValue < -5.0 && data.perp_spot_spread < -2.0 && data.cvd > 1.5 && data.liq_shorts > 5000) {
+                badge.style.display = 'block'; badge.innerText = 'CONFLUENCE BUY ENTRY'; badge.style.backgroundColor = '#26a69a';
+                if (now - lastAlertFired > 8000) { playSignalAlertTone(true); lastAlertFired = now; }
+            } else if (deltaValue > 5.0 && data.perp_spot_spread > 2.0 && data.cvd < -1.5 && data.liq_longs > 5000) {
+                badge.style.display = 'block'; badge.innerText = 'CONFLUENCE SHORT ENTRY'; badge.style.backgroundColor = '#ef5350';
+                if (now - lastAlertFired > 8000) { playSignalAlertTone(false); lastAlertFired = now; }
+            } else { badge.style.display = 'none'; }
+
+            Object.keys(data.venue_matrix).forEach(v => {
+                const row = document.getElementById(`row-${v}`); const priceCell = document.getElementById(`price-${v}`); const statusCell = document.getElementById(`status-${v}`);
+                if (row) {
+                    const node = data.venue_matrix[v];
+                    if (node.status === "OFFLINE") {
+                        row.style.color = '#ff4d4d'; statusCell.innerText = "EXCLUDED"; priceCell.innerText = "ERROR";
+                    } else {
+                        row.style.color = '#00ffcc'; statusCell.innerText = "OK"; priceCell.innerText = `$${node.micro_price.toFixed(2)}`;
+                    }
+                }
+            });
+            const dot = document.getElementById('global-dot'); const txt = document.getElementById('global-status-text');
+            txt.innerText = "16/16 SYNCED"; txt.style.color = '#ffffff'; dot.style.backgroundColor = '#00ffcc';
+        };
+        socket.onerror = function() {
+            document.getElementById('global-dot').style.backgroundColor = '#ff4d4d'; document.getElementById('global-status-text').innerText = "DISCONNECTED";
+        };
+    </script>
+</body>
+</html>
+
