@@ -113,8 +113,8 @@
         resizeObserver.observe(zone1Container); resizeObserver.observe(zone2AContainer); resizeObserver.observe(zone2BContainer);
 
         const venues = [
-            'btcusdt_spot', 'btcusdc_spot', 'btcfdusd_spot', 'btctry_spot', 'btcars_spot', 'btcbrl_spot', 'btceur_spot', 'btcgbp_spot',
-            'btcusdt_perp', 'btcusdc_perp', 'btcbusd_perp', 'btceur_perp', 'btctry_perp', 'btcbrl_perp', 'btcjpy_perp', 'btcaud_perp'
+            'binance_spot', 'btcusdc_spot', 'btcfdusd_spot', 'btctry_spot', 'btcars_spot', 'btcbrl_spot', 'btceur_spot', 'btcgbp_spot',
+            'binance_perp', 'btcusdc_perp', 'btcbusd_perp', 'btceur_perp', 'btctry_perp', 'btcbrl_perp', 'btcjpy_perp', 'btcaud_perp'
         ];
         const tbody = document.getElementById('matrix-tbody');
         venues.forEach(v => {
@@ -123,51 +123,59 @@
             tbody.appendChild(row);
         });
 
-        // --- HARDCODED CORRECT SECURITY TUNNEL ROUTE ---
-        const socket = new WebSocket("wss://://onrender.com");
+        let lastAlertFired = 0;
 
-        socket.onmessage = function(event) {
-            const data = JSON.parse(event.data); const ts = data.time;
-            candleSeries.update({ time: ts, open: data.candle.open, high: data.candle.high, low: data.candle.low, close: data.candle.close });
-            rvDepthSeries.update({ time: ts, value: data.rv_depth });
-            rvVolSeries.update({ time: ts, value: data.rv_vol });
-            rvOISeries.update({ time: ts, value: data.rv_oi });
+        // --- STABLE POLLING FUNCTION (Bypasses Render's WebSocket Block) ---
+        async function fetchUpdate() {
+            try {
+                const response = await fetch("/data");
+                const data = await response.json();
+                const ts = data.time;
 
-            const deltaValue = data.candle.close - data.rv_depth;
-            spreadHistogram.update({ time: ts, value: deltaValue, color: deltaValue >= 0 ? '#26a69a' : '#ef5350' });
-            perpSpotSpreadLine.update({ time: ts, value: data.perp_spot_spread });
+                candleSeries.update({ time: ts, open: data.candle.open, high: data.candle.high, low: data.candle.low, close: data.candle.close });
+                rvDepthSeries.update({ time: ts, value: data.rv_depth });
+                rvVolSeries.update({ time: ts, value: data.rv_vol });
+                rvOISeries.update({ time: ts, value: data.rv_oi });
 
-            document.getElementById('cvd-box').innerText = `${data.cvd > 0 ? '+' : ''}${data.cvd.toFixed(2)} BTC`;
-            document.getElementById('cvd-box').style.color = data.cvd >= 0 ? '#26a69a' : '#ef5350';
-            document.getElementById('liq-shorts-box').innerText = `$${data.liq_shorts.toLocaleString(undefined, {maximumFractionDigits:0})}`;
-            document.getElementById('liq-longs-box').innerText = `$${data.liq_longs.toLocaleString(undefined, {maximumFractionDigits:0})}`;
+                const deltaValue = data.candle.close - data.rv_depth;
+                spreadHistogram.update({ time: ts, value: deltaValue, color: deltaValue >= 0 ? '#26a69a' : '#ef5350' });
+                perpSpotSpreadLine.update({ time: ts, value: data.perp_spot_spread });
 
-            const badge = document.getElementById('trade-signal-badge'); const now = Date.now();
-            if (deltaValue < -5.0 && data.perp_spot_spread < -2.0 && data.cvd > 1.5 && data.liq_shorts > 5000) {
-                badge.style.display = 'block'; badge.innerText = 'CONFLUENCE BUY ENTRY'; badge.style.backgroundColor = '#26a69a';
-                if (now - lastAlertFired > 8000) { playSignalAlertTone(true); lastAlertFired = now; }
-            } else if (deltaValue > 5.0 && data.perp_spot_spread > 2.0 && data.cvd < -1.5 && data.liq_longs > 5000) {
-                badge.style.display = 'block'; badge.innerText = 'CONFLUENCE SHORT ENTRY'; badge.style.backgroundColor = '#ef5350';
-                if (now - lastAlertFired > 8000) { playSignalAlertTone(false); lastAlertFired = now; }
-            } else { badge.style.display = 'none'; }
+                document.getElementById('cvd-box').innerText = `${data.cvd > 0 ? '+' : ''}${data.cvd.toFixed(2)} BTC`;
+                document.getElementById('cvd-box').style.color = data.cvd >= 0 ? '#26a69a' : '#ef5350';
+                document.getElementById('liq-shorts-box').innerText = `$${data.liq_shorts.toLocaleString(undefined, {maximumFractionDigits:0})}`;
+                document.getElementById('liq-longs-box').innerText = `$${data.liq_longs.toLocaleString(undefined, {maximumFractionDigits:0})}`;
 
-            Object.keys(data.venue_matrix).forEach(v => {
-                const row = document.getElementById(`row-${v}`); const priceCell = document.getElementById(`price-${v}`); const statusCell = document.getElementById(`status-${v}`);
-                if (row) {
-                    const node = data.venue_matrix[v];
-                    if (node.status === "OFFLINE") {
-                        row.style.color = '#ff4d4d'; statusCell.innerText = "EXCLUDED"; priceCell.innerText = "ERROR";
-                    } else {
-                        row.style.color = '#00ffcc'; statusCell.innerText = "OK"; priceCell.innerText = `$${node.micro_price.toFixed(2)}`;
+                const badge = document.getElementById('trade-signal-badge'); const now = Date.now();
+                if (deltaValue < -5.0 && data.perp_spot_spread < -2.0 && data.cvd > 1.5 && data.liq_shorts > 5000) {
+                    badge.style.display = 'block'; badge.innerText = 'CONFLUENCE BUY ENTRY'; badge.style.backgroundColor = '#26a69a';
+                    if (now - lastAlertFired > 8000) { playSignalAlertTone(true); lastAlertFired = now; }
+                } else if (deltaValue > 5.0 && data.perp_spot_spread > 2.0 && data.cvd < -1.5 && data.liq_longs > 5000) {
+                    badge.style.display = 'block'; badge.innerText = 'CONFLUENCE SHORT ENTRY'; badge.style.backgroundColor = '#ef5350';
+                    if (now - lastAlertFired > 8000) { playSignalAlertTone(false); lastAlertFired = now; }
+                } else { badge.style.display = 'none'; }
+
+                Object.keys(data.venue_matrix).forEach(v => {
+                    const row = document.getElementById(`row-${v}`); const priceCell = document.getElementById(`price-${v}`); const statusCell = document.getElementById(`status-${v}`);
+                    if (row) {
+                        const node = data.venue_matrix[v];
+                        if (node.status === "OFFLINE") {
+                            row.style.color = '#ff4d4d'; statusCell.innerText = "EXCLUDED"; priceCell.innerText = "ERROR";
+                        } else {
+                            row.style.color = '#00ffcc'; statusCell.innerText = "OK"; priceCell.innerText = `$${node.micro_price.toFixed(2)}`;
+                        }
                     }
-                }
-            });
-            const dot = document.getElementById('global-dot'); const txt = document.getElementById('global-status-text');
-            txt.innerText = "16/16 SYNCED"; txt.style.color = '#ffffff'; dot.style.backgroundColor = '#00ffcc';
-        };
-        socket.onerror = function() {
-            document.getElementById('global-dot').style.backgroundColor = '#ff4d4d'; document.getElementById('global-status-text').innerText = "DISCONNECTED";
-        };
+                });
+                document.getElementById('global-dot').style.backgroundColor = '#00ffcc'; 
+                document.getElementById('global-status-text').innerText = "16/16 SYNCED (HTTP)";
+            } catch (error) {
+                document.getElementById('global-dot').style.backgroundColor = '#ff4d4d'; 
+                document.getElementById('global-status-text').innerText = "POLLING LAG";
+            }
+        }
+
+        // Polls the server loop automatically every 1000 milliseconds safely
+        setInterval(fetchUpdate, 1000);
     </script>
 </body>
 </html>
